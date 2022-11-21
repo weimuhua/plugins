@@ -15,6 +15,13 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebChromeClientHostApi;
+import android.net.Uri;
+import android.util.Log;
+import android.annotation.TargetApi;
+import android.app.Activity;
+import android.content.ClipData;
+import android.content.Intent;
+import android.webkit.ValueCallback;
 
 /**
  * Host api implementation for {@link WebChromeClient}.
@@ -22,9 +29,14 @@ import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebChromeClient
  * <p>Handles creating {@link WebChromeClient}s that intercommunicate with a paired Dart object.
  */
 public class WebChromeClientHostApiImpl implements WebChromeClientHostApi {
+  private static final String TAG = "WebChromeClientHostApiI";
   private final InstanceManager instanceManager;
   private final WebChromeClientCreator webChromeClientCreator;
   private final WebChromeClientFlutterApiImpl flutterApi;
+
+  private static ValueCallback<Uri> valueCallback;
+  private static ValueCallback<Uri[]> filePathCallback;
+  private final static int FILE_CHOOSER_RESULT_CODE = 10000;
 
   /**
    * Implementation of {@link WebChromeClient} that passes arguments of callback methods to Dart.
@@ -107,6 +119,20 @@ public class WebChromeClientHostApiImpl implements WebChromeClientHostApi {
       }
     }
 
+    //For Android  >= 4.1
+    public void openFileChooser(ValueCallback<Uri> valueCallback, String acceptType, String capture) {
+      WebChromeClientHostApiImpl.valueCallback = valueCallback;
+      openImageChooserActivity();
+    }
+
+    // For Android >= 5.0
+    @Override
+    public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+      WebChromeClientHostApiImpl.filePathCallback = filePathCallback;
+      openImageChooserActivity();
+      return true;
+    }
+
     /**
      * Set the {@link WebViewClient} that calls to {@link WebChromeClient#onCreateWindow} are passed
      * to.
@@ -165,4 +191,59 @@ public class WebChromeClientHostApiImpl implements WebChromeClientHostApi {
         webChromeClientCreator.createWebChromeClient(flutterApi, webViewClient);
     instanceManager.addDartCreatedInstance(webChromeClient, instanceId);
   }
+
+  private static void openImageChooserActivity() {
+    if (WebViewFlutterPlugin.activity == null) {
+      Log.v(TAG, "activity is null");
+      return;
+    }
+    Intent it = new Intent(Intent.ACTION_GET_CONTENT);
+    it.addCategory(Intent.CATEGORY_OPENABLE);
+    it.setType("image/*");
+
+    Intent chooser = new Intent(Intent.ACTION_CHOOSER);
+    chooser.putExtra(Intent.EXTRA_INTENT, it);
+    WebViewFlutterPlugin.activity.startActivityForResult(chooser, FILE_CHOOSER_RESULT_CODE);
+  }
+
+  public boolean activityResult(int requestCode, int resultCode, Intent data) {
+    if (null == valueCallback && null == filePathCallback) {
+      return false;
+    }
+    Uri result = null;
+    if (requestCode == FILE_CHOOSER_RESULT_CODE) {
+      result = data == null || resultCode != Activity.RESULT_OK ? null : data.getData();
+    }
+    if (filePathCallback != null) {
+      onActivityResultAboveL(requestCode, resultCode, data);
+    } else if (valueCallback != null && result != null) {
+      valueCallback.onReceiveValue(result);
+      valueCallback = null;
+    }
+    return false;
+  }
+
+  @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+  private void onActivityResultAboveL(int requestCode, int resultCode, Intent intent) {
+    Uri[] results = null;
+    if (requestCode == FILE_CHOOSER_RESULT_CODE && resultCode == Activity.RESULT_OK) {
+      if (intent != null) {
+        String dataString = intent.getDataString();
+        ClipData clipData = intent.getClipData();
+        if (clipData != null) {
+          results = new Uri[clipData.getItemCount()];
+          for (int i = 0; i < clipData.getItemCount(); i++) {
+            ClipData.Item item = clipData.getItemAt(i);
+            results[i] = item.getUri();
+          }
+        }
+        if (dataString != null) {
+          results = new Uri[]{Uri.parse(dataString)};
+        }
+      }
+    }
+    filePathCallback.onReceiveValue(results);
+    filePathCallback = null;
+  }
+
 }

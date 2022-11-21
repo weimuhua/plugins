@@ -4,11 +4,11 @@
 
 package io.flutter.plugins.webviewflutter;
 
+import android.app.Application;
 import android.content.Context;
 import android.os.Handler;
 import android.view.View;
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
@@ -20,9 +20,11 @@ import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.FlutterAssetMan
 import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.JavaScriptChannelHostApi;
 import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebChromeClientHostApi;
 import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebSettingsHostApi;
-import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebStorageHostApi;
 import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebViewClientHostApi;
 import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebViewHostApi;
+import android.app.Activity;
+import android.content.Intent;
+import io.flutter.plugin.common.PluginRegistry;
 
 /**
  * Java platform implementation of the webview_flutter plugin.
@@ -32,11 +34,13 @@ import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebViewHostApi;
  * <p>Call {@link #registerWith} to use the stable {@code io.flutter.plugin.common} package instead.
  */
 public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
-  private InstanceManager instanceManager;
-
   private FlutterPluginBinding pluginBinding;
   private WebViewHostApiImpl webViewHostApi;
   private JavaScriptChannelHostApiImpl javaScriptChannelHostApi;
+  private WebChromeClientHostApiImpl webChromeClientHostApi;
+  private static final String TAG = "WebViewFlutterPlugin";
+  public static Activity activity;
+  public static Application application;
 
   /**
    * Add an instance of this to {@link io.flutter.embedding.engine.plugins.PluginRegistry} to
@@ -78,8 +82,7 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
       View containerView,
       FlutterAssetManager flutterAssetManager) {
 
-    instanceManager = InstanceManager.open(identifier -> {});
-
+    InstanceManager instanceManager = InstanceManager.open(identifier -> {});
     viewRegistry.registerViewFactory(
         "plugins.flutter.io/webview", new FlutterWebViewFactory(instanceManager));
 
@@ -101,12 +104,13 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
             instanceManager,
             new WebViewClientHostApiImpl.WebViewClientCreator(),
             new WebViewClientFlutterApiImpl(binaryMessenger, instanceManager)));
-    WebChromeClientHostApi.setup(
-        binaryMessenger,
-        new WebChromeClientHostApiImpl(
+
+    webChromeClientHostApi = new WebChromeClientHostApiImpl(
             instanceManager,
             new WebChromeClientHostApiImpl.WebChromeClientCreator(),
-            new WebChromeClientFlutterApiImpl(binaryMessenger, instanceManager)));
+            new WebChromeClientFlutterApiImpl(binaryMessenger, instanceManager));
+    WebChromeClientHostApi.setup(binaryMessenger, webChromeClientHostApi);
+
     DownloadListenerHostApi.setup(
         binaryMessenger,
         new DownloadListenerHostApiImpl(
@@ -120,7 +124,7 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
     FlutterAssetManagerHostApi.setup(
         binaryMessenger, new FlutterAssetManagerHostApiImpl(flutterAssetManager));
     CookieManagerHostApi.setup(binaryMessenger, new CookieManagerHostApiImpl());
-    WebStorageHostApi.setup(
+    GeneratedAndroidWebView.WebStorageHostApi.setup(
         binaryMessenger,
         new WebStorageHostApiImpl(instanceManager, new WebStorageHostApiImpl.WebStorageCreator()));
   }
@@ -128,6 +132,7 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
     pluginBinding = binding;
+    application = (Application) binding.getApplicationContext();
     setUp(
         binding.getBinaryMessenger(),
         binding.getPlatformViewRegistry(),
@@ -139,28 +144,40 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
 
   @Override
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
-    instanceManager.close();
   }
 
   @Override
-  public void onAttachedToActivity(@NonNull ActivityPluginBinding activityPluginBinding) {
-    updateContext(activityPluginBinding.getActivity());
+  public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
+    activity = binding.getActivity();
+    updateContext(binding.getActivity());
+    binding.addActivityResultListener(new PluginRegistry.ActivityResultListener() {
+      @Override
+      public boolean onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (webChromeClientHostApi != null){
+          return webChromeClientHostApi.activityResult(requestCode, resultCode, data);
+        }
+        return false;
+      }
+    });
   }
 
   @Override
   public void onDetachedFromActivityForConfigChanges() {
     updateContext(pluginBinding.getApplicationContext());
+    activity = null;
   }
 
   @Override
   public void onReattachedToActivityForConfigChanges(
       @NonNull ActivityPluginBinding activityPluginBinding) {
     updateContext(activityPluginBinding.getActivity());
+    activity = activityPluginBinding.getActivity();
   }
 
   @Override
   public void onDetachedFromActivity() {
     updateContext(pluginBinding.getApplicationContext());
+    activity = null;
   }
 
   private void updateContext(Context context) {
@@ -168,9 +185,4 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
     javaScriptChannelHostApi.setPlatformThreadHandler(new Handler(context.getMainLooper()));
   }
 
-  /** Maintains instances used to communicate with the corresponding objects in Dart. */
-  @Nullable
-  public InstanceManager getInstanceManager() {
-    return instanceManager;
-  }
 }
